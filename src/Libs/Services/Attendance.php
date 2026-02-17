@@ -20,7 +20,7 @@ class Attendance
      *               - timestamp: Timestamp of the attendance record
      *               - type: Attendance type (might be device specific)
      */
-    public static function get(ZKTeco $self, $callback)
+    public static function get(ZKTeco $self, ?callable $callback = null)
     {
         // ping to device
         Ping::run($self);

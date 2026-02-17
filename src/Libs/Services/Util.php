@@ -157,6 +157,7 @@ class Util
 
             // Need to read more data from socket
             $ret = @socket_recv($self->_zkclient, $data, $length + self::TCP_HEADER_SIZE * 2, 0);
+            $data = $data ?? '';
             self::debugLog($self, 'TCP Recv (raw): ' . bin2hex($data) . ' (' . strlen($data) . ' bytes, ret=' . $ret . ')');
 
             if ($ret !== false && !empty($data)) {
@@ -179,6 +180,7 @@ class Util
             return '';
         } else {
             @socket_recvfrom($self->_zkclient, $data, $length, 0, $self->_ip, $self->_port);
+            $data = $data ?? '';
         }
         return $data;
     }
@@ -481,6 +483,9 @@ class Util
      */
     static public function checkValid($reply)
     {
+        if (empty($reply) || strlen($reply) < 8) {
+            return false;
+        }
         $u = unpack('H2h1/H2h2', substr($reply, 0, 8));
 
         $command = hexdec($u['h2'] . $u['h1']);

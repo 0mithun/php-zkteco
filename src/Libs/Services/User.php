@@ -63,7 +63,7 @@ class User
      *
      * @return array [userid, name, cardno, uid, role, password]
      */
-    public static function get(ZKTeco $self, callable $callback = null)
+    public static function get(ZKTeco $self, ?callable $callback = null)
     {
         // ping to device
         Ping::run($self);
