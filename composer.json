@@ -1,0 +1,56 @@
+{
+  "name": "0mithun/php-zkteco",
+  "description": "A PHP package for managing ZKTeco biometric devices with TCP and UDP protocol support.",
+  "license": "MIT",
+  "homepage": "https://github.com/0mithun/php-zkteco",
+  "support": {
+    "issues": "https://github.com/0mithun/php-zkteco/issues",
+    "source": "https://github.com/0mithun/php-zkteco"
+  },
+  "keywords": [
+    "laravel",
+    "ZkTeco",
+    "fingerprint",
+    "attendances",
+    "tcp",
+    "udp",
+    "biometric"
+  ],
+  "authors": [
+    {
+      "name": "Mithun",
+      "email": "mithunrptc@gmail.com"
+    }
+  ],
+  "require": {
+    "php": "^8.0"
+  },
+  "require-dev": {
+    "phpunit/phpunit": "^8.0|^9.3|^10.4"
+  },
+  "autoload": {
+    "psr-4": {
+      "Mithun\\PhpZkteco\\": "src/"
+    }
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "Mithun\\PhpZkteco\\Tests\\": "tests/"
+    }
+  },
+  "extra": {
+    "branch-alias": {
+      "dev-master": "1.x-dev"
+    },
+    "laravel": {
+      "providers": [
+        "Mithun\\PhpZkteco\\ZktecoPhpServiceProvider"
+      ]
+    }
+  },
+  "config": {
+    "sort-packages": true
+  },
+  "minimum-stability": "stable",
+  "prefer-stable": true
+}
