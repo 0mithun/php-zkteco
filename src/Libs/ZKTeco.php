@@ -481,6 +481,90 @@ class ZKTeco
     }
 
     /**
+     * Register for real-time attendance logs from the device.
+     * 
+     * This method registers the connection for real-time events and listens for
+     * attendance log updates. When a user scans their fingerprint or enters their
+     * credentials, the callback is called with the log data.
+     *
+     * @param callable $callback The callback function to call with each real-time log.
+     *                           Receives an array with: user_id, record_time, state, device_ip
+     * @param int $timeout Timeout in seconds for listening (default: 0 = infinite).
+     * @return bool True if successfully registered for events.
+     */
+    public function getRealTimeLogs(callable $callback, int $timeout = 0): bool
+    {
+        $this->_section = __METHOD__;
+
+        // Send CMD_REG_EVENT command to register for real-time events
+        // Data: 0x01 0x00 0x00 0x00 = register for EF_ATTLOG events
+        $command = Util::CMD_REG_EVENT;
+        $commandString = pack('V', Util::EF_ATTLOG); // 4 bytes little-endian: 0x01 0x00 0x00 0x00
+        $chksum = 0;
+        $sessionId = $this->_session_id;
+
+        // Get reply_id from last received data
+        $replyId = 0;
+        if (strlen($this->_data_recv) >= 8) {
+            $u = unpack('H2h1/H2h2/H2h3/H2h4/H2h5/H2h6/H2h7/H2h8', substr($this->_data_recv, 0, 8));
+            $replyId = hexdec($u['h8'] . $u['h7']);
+        }
+
+        $buf = Util::createHeader($command, $chksum, $sessionId, $replyId, $commandString);
+        Util::sendData($this, $buf);
+
+        // Receive acknowledgment
+        $this->_data_recv = Util::recvData($this, 1024);
+        
+        if (!Util::checkValid($this->_data_recv)) {
+            return false;
+        }
+
+        // Set socket to non-blocking for continuous listening
+        if ($this->_zkclient) {
+            socket_set_nonblock($this->_zkclient);
+        }
+
+        // Start listening for real-time events
+        $startTime = time();
+        
+        while (true) {
+            // Check timeout
+            if ($timeout > 0 && (time() - $startTime) >= $timeout) {
+                break;
+            }
+
+            // Try to receive data
+            $data = '';
+            if ($this->isTcp()) {
+                $ret = @socket_recv($this->_zkclient, $data, 1024, 0);
+            } else {
+                $ret = @socket_recvfrom($this->_zkclient, $data, 1024, 0, $this->_ip, $this->_port);
+            }
+
+            if ($ret !== false && !empty($data)) {
+                // Check if this is a real-time event
+                if (Util::isRealTimeEvent($data)) {
+                    $log = Util::decodeRealTimeLog($data, $this->_ip);
+                    if ($log !== null) {
+                        $callback($log);
+                    }
+                }
+            } else {
+                // No data received, sleep briefly to avoid CPU spin
+                usleep(100000); // 100ms
+            }
+        }
+
+        // Restore blocking mode
+        if ($this->_zkclient) {
+            socket_set_block($this->_zkclient);
+        }
+
+        return true;
+    }
+
+    /**
      * Sets the device time to the specified value.
      *
      * @param  string  $t  The time to set, in the format "Y-m-d H:i:s".

@@ -44,6 +44,8 @@ class Util
     const CMD_GET_TIME = 201; // Obtain the machine time
     const CMD_SET_TIME = 202; // Set machines time
 
+    const CMD_REG_EVENT = 500; // Register for real-time events
+
     const CMD_VERSION = 1100; // Obtain the firmware edition
     const CMD_DEVICE = 11; // Read in the machine some configuration parameter
 
@@ -63,6 +65,17 @@ class Util
     const FCT_USER = 5;
     const FCT_SMS = 6;
     const FCT_UDATA = 7;
+
+    // Event flags for real-time events (CMD_REG_EVENT)
+    const EF_ATTLOG = 1;       // Attendance log event
+    const EF_FINGER = 2;       // Fingerprint event
+    const EF_ENROLLUSER = 4;   // Enroll user event
+    const EF_ENROLLFINGER = 8; // Enroll fingerprint event
+    const EF_BUTTON = 16;      // Button pressed event
+    const EF_UNLOCK = 32;      // Door unlock event
+    const EF_VERIFY = 128;     // Verify event
+    const EF_FPFTR = 256;      // Fingerprint feature event
+    const EF_ALARM = 512;      // Alarm event
 
     const COMMAND_TYPE_GENERAL = 'general';
     const COMMAND_TYPE_DATA = 'data';
@@ -762,5 +775,81 @@ class Util
         $row .= PHP_EOL;
 
         @file_put_contents($log, $row, FILE_APPEND);
+    }
+
+    /**
+     * Check if the received data is a real-time event.
+     *
+     * @param string $data The received data.
+     * @return bool True if it's a real-time event.
+     */
+    public static function isRealTimeEvent(string $data): bool
+    {
+        // Strip TCP header if present
+        $payload = self::stripTcpHeader($data);
+        
+        if (strlen($payload) < 8) {
+            return false;
+        }
+        
+        // Read command ID (first 2 bytes, little-endian)
+        $commandId = unpack('v', substr($payload, 0, 2))[1];
+        
+        // Read event type (bytes 4-5, little-endian)
+        $event = unpack('v', substr($payload, 4, 2))[1];
+        
+        return $commandId === self::CMD_REG_EVENT && $event === self::EF_ATTLOG;
+    }
+
+    /**
+     * Decode a real-time attendance log from received data.
+     *
+     * @param string $data The received data (with or without TCP header).
+     * @param string $deviceIp The device IP address.
+     * @return array|null The decoded log entry or null if invalid.
+     */
+    public static function decodeRealTimeLog(string $data, string $deviceIp = ''): ?array
+    {
+        // Strip TCP header if present
+        $payload = self::stripTcpHeader($data);
+        
+        if (strlen($payload) < 40) {
+            return null;
+        }
+        
+        // Skip the first 8 bytes (ZKTeco header)
+        $recvData = substr($payload, 8);
+        
+        if (strlen($recvData) < 32) {
+            return null;
+        }
+        
+        // User ID: bytes 0-9 (ASCII string, null-terminated)
+        $userId = rtrim(substr($recvData, 0, 9), "\x00");
+        
+        // Attendance time: bytes 26-32 (6 bytes: year, month, date, hour, minute, second)
+        $timeData = substr($recvData, 26, 6);
+        if (strlen($timeData) >= 6) {
+            $year = 2000 + ord($timeData[0]);
+            $month = ord($timeData[1]);
+            $day = ord($timeData[2]);
+            $hour = ord($timeData[3]);
+            $minute = ord($timeData[4]);
+            $second = ord($timeData[5]);
+            
+            $recordTime = sprintf('%04d-%02d-%02d %02d:%02d:%02d', $year, $month, $day, $hour, $minute, $second);
+        } else {
+            $recordTime = date('Y-m-d H:i:s');
+        }
+        
+        // State/verification type: byte 24
+        $state = ord(substr($recvData, 24, 1));
+        
+        return [
+            'user_id' => $userId,
+            'record_time' => $recordTime,
+            'state' => $state,
+            'device_ip' => $deviceIp,
+        ];
     }
 }

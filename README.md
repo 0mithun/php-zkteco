@@ -15,6 +15,7 @@ A PHP library for interfacing with ZKTeco biometric attendance devices. Supports
 - **Dual Protocol Support**: Works with both TCP and UDP connections
 - **User Management**: Add, remove, and retrieve users from the device
 - **Attendance Logs**: Fetch attendance records with optional filtering
+- **Real-Time Logs**: 🆕 Listen for live attendance events as they happen
 - **Fingerprint Management**: Get, set, and remove fingerprints
 - **Device Control**: Enable/disable device, restart, shutdown, sleep/resume
 - **LCD Display**: Write custom messages to device screen
@@ -337,6 +338,36 @@ $todayLogs = $zk->getAttendances(function($record) {
 ```php
 $zk->clearAttendance();
 ```
+
+#### `getRealTimeLogs(callable $callback, int $timeout = 0): bool`
+🆕 Registers for real-time attendance events. When a user scans their fingerprint or enters credentials, the callback is called immediately with the log data.
+
+**Parameters:**
+- `$callback` - Function called with each real-time log entry
+- `$timeout` - Timeout in seconds (0 = infinite, default)
+
+```php
+// Listen for real-time attendance events
+$zk->getRealTimeLogs(function($log) {
+    echo "User {$log['user_id']} punched at {$log['record_time']}\n";
+    
+    // $log contains:
+    // [
+    //     'user_id' => '12345',
+    //     'record_time' => '2026-02-17 09:00:00',
+    //     'state' => 1,
+    //     'device_ip' => '192.168.1.100'
+    // ]
+}, timeout: 60); // Listen for 60 seconds
+
+// Or listen indefinitely (Ctrl+C to stop)
+$zk->getRealTimeLogs(function($log) {
+    // Process attendance in real-time
+    saveToDatabase($log);
+});
+```
+
+**Note:** This method blocks while listening for events. Use the `$timeout` parameter or run in a background process/worker.
 
 ---
 
