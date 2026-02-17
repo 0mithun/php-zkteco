@@ -572,7 +572,6 @@ If you've found a security vulnerability, please email [mithunrptc@gmail.com](ma
 ## Credits
 
 - [Mithun](https://github.com/0mithun)
-- [Original library by Coding Libs](https://github.com/coding-libs/zkteco-php)
 - [ZK Protocol Documentation](https://github.com/adrobinoga/zk-protocol)
 
 ## License
