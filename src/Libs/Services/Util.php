@@ -781,24 +781,82 @@ class Util
      * Check if the received data is a real-time event.
      *
      * @param string $data The received data.
+     * @param int|null $eventMask Optional event mask to check against.
      * @return bool True if it's a real-time event.
      */
-    public static function isRealTimeEvent(string $data): bool
+    public static function isRealTimeEvent(string $data, ?int $eventMask = null): bool
     {
         // Strip TCP header if present
         $payload = self::stripTcpHeader($data);
-        
+
         if (strlen($payload) < 8) {
             return false;
         }
-        
+
         // Read command ID (first 2 bytes, little-endian)
         $commandId = unpack('v', substr($payload, 0, 2))[1];
-        
+
+        if ($commandId !== self::CMD_REG_EVENT) {
+            return false;
+        }
+
         // Read event type (bytes 4-5, little-endian)
         $event = unpack('v', substr($payload, 4, 2))[1];
-        
-        return $commandId === self::CMD_REG_EVENT && $event === self::EF_ATTLOG;
+
+        // If no mask specified, check against all known events
+        if ($eventMask === null) {
+            $eventMask = self::EF_ATTLOG | self::EF_FINGER | self::EF_ENROLLUSER |
+                         self::EF_ENROLLFINGER | self::EF_BUTTON | self::EF_UNLOCK |
+                         self::EF_VERIFY | self::EF_FPFTR | self::EF_ALARM;
+        }
+
+        return ($event & $eventMask) !== 0;
+    }
+
+    /**
+     * Get the event type from received data.
+     *
+     * @param string $data The received data.
+     * @return int|null The event type constant or null if invalid.
+     */
+    public static function getEventType(string $data): ?int
+    {
+        $payload = self::stripTcpHeader($data);
+
+        if (strlen($payload) < 8) {
+            return null;
+        }
+
+        $commandId = unpack('v', substr($payload, 0, 2))[1];
+
+        if ($commandId !== self::CMD_REG_EVENT) {
+            return null;
+        }
+
+        return unpack('v', substr($payload, 4, 2))[1];
+    }
+
+    /**
+     * Get human-readable event name from event type.
+     *
+     * @param int $eventType The event type constant.
+     * @return string The event name.
+     */
+    public static function getEventName(int $eventType): string
+    {
+        $names = [
+            self::EF_ATTLOG => 'attendance',
+            self::EF_FINGER => 'finger',
+            self::EF_ENROLLUSER => 'enroll_user',
+            self::EF_ENROLLFINGER => 'enroll_finger',
+            self::EF_BUTTON => 'button',
+            self::EF_UNLOCK => 'unlock',
+            self::EF_VERIFY => 'verify',
+            self::EF_FPFTR => 'finger_feature',
+            self::EF_ALARM => 'alarm',
+        ];
+
+        return $names[$eventType] ?? 'unknown';
     }
 
     /**
@@ -812,21 +870,21 @@ class Util
     {
         // Strip TCP header if present
         $payload = self::stripTcpHeader($data);
-        
+
         if (strlen($payload) < 40) {
             return null;
         }
-        
+
         // Skip the first 8 bytes (ZKTeco header)
         $recvData = substr($payload, 8);
-        
+
         if (strlen($recvData) < 32) {
             return null;
         }
-        
+
         // User ID: bytes 0-9 (ASCII string, null-terminated)
         $userId = rtrim(substr($recvData, 0, 9), "\x00");
-        
+
         // Attendance time: bytes 26-32 (6 bytes: year, month, date, hour, minute, second)
         $timeData = substr($recvData, 26, 6);
         if (strlen($timeData) >= 6) {
@@ -836,20 +894,115 @@ class Util
             $hour = ord($timeData[3]);
             $minute = ord($timeData[4]);
             $second = ord($timeData[5]);
-            
+
             $recordTime = sprintf('%04d-%02d-%02d %02d:%02d:%02d', $year, $month, $day, $hour, $minute, $second);
         } else {
             $recordTime = date('Y-m-d H:i:s');
         }
-        
+
         // State/verification type: byte 24
         $state = ord(substr($recvData, 24, 1));
-        
+
         return [
             'user_id' => $userId,
             'record_time' => $recordTime,
             'state' => $state,
             'device_ip' => $deviceIp,
         ];
+    }
+
+    /**
+     * Decode any real-time event from received data.
+     *
+     * @param string $data The received data (with or without TCP header).
+     * @param string $deviceIp The device IP address.
+     * @return array|null The decoded event or null if invalid.
+     */
+    public static function decodeRealTimeEvent(string $data, string $deviceIp = ''): ?array
+    {
+        $eventType = self::getEventType($data);
+
+        if ($eventType === null) {
+            return null;
+        }
+
+        $payload = self::stripTcpHeader($data);
+        $recvData = substr($payload, 8);
+
+        $baseEvent = [
+            'event_type' => $eventType,
+            'event_name' => self::getEventName($eventType),
+            'device_ip' => $deviceIp,
+            'timestamp' => date('Y-m-d H:i:s'),
+        ];
+
+        switch ($eventType) {
+            case self::EF_ATTLOG:
+                $decoded = self::decodeRealTimeLog($data, $deviceIp);
+                return $decoded ? array_merge($baseEvent, $decoded) : null;
+
+            case self::EF_ENROLLUSER:
+            case self::EF_VERIFY:
+                // User events: user_id in first 9 bytes
+                if (strlen($recvData) < 9) {
+                    return null;
+                }
+                $userId = rtrim(substr($recvData, 0, 9), "\x00");
+                return array_merge($baseEvent, [
+                    'user_id' => $userId,
+                ]);
+
+            case self::EF_FINGER:
+            case self::EF_ENROLLFINGER:
+            case self::EF_FPFTR:
+                // Fingerprint events: user_id + finger_index
+                if (strlen($recvData) < 12) {
+                    return null;
+                }
+                $userId = rtrim(substr($recvData, 0, 9), "\x00");
+                $fingerIndex = ord(substr($recvData, 9, 1));
+                return array_merge($baseEvent, [
+                    'user_id' => $userId,
+                    'finger_index' => $fingerIndex,
+                ]);
+
+            case self::EF_BUTTON:
+                // Button press event
+                if (strlen($recvData) < 4) {
+                    return null;
+                }
+                $buttonId = unpack('v', substr($recvData, 0, 2))[1];
+                return array_merge($baseEvent, [
+                    'button_id' => $buttonId,
+                ]);
+
+            case self::EF_UNLOCK:
+                // Door unlock event
+                if (strlen($recvData) < 4) {
+                    return null;
+                }
+                $doorId = ord(substr($recvData, 0, 1));
+                $unlockType = ord(substr($recvData, 1, 1));
+                return array_merge($baseEvent, [
+                    'door_id' => $doorId,
+                    'unlock_type' => $unlockType,
+                ]);
+
+            case self::EF_ALARM:
+                // Alarm event
+                if (strlen($recvData) < 4) {
+                    return null;
+                }
+                $alarmType = unpack('v', substr($recvData, 0, 2))[1];
+                return array_merge($baseEvent, [
+                    'alarm_type' => $alarmType,
+                ]);
+
+            default:
+                // Unknown event, return raw data
+                return array_merge($baseEvent, [
+                    'raw_data' => bin2hex($recvData),
+                ]);
+        }
     }
 }

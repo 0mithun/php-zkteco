@@ -369,6 +369,84 @@ $zk->getRealTimeLogs(function($log) {
 
 **Note:** This method blocks while listening for events. Use the `$timeout` parameter or run in a background process/worker.
 
+#### `getRealTimeEvents(callable $callback, int $events, int $timeout = 0): bool`
+🆕 **v1.2.0** Registers for multiple real-time event types. This is a more comprehensive version of `getRealTimeLogs()` that supports all device events.
+
+**Supported Events (use `Mithun\PhpZkteco\Libs\Services\Util` constants):**
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `EF_ATTLOG` | 1 | Attendance log (user punch in/out) |
+| `EF_FINGER` | 2 | Fingerprint scanned |
+| `EF_ENROLLUSER` | 4 | User enrolled on device |
+| `EF_ENROLLFINGER` | 8 | Fingerprint enrolled |
+| `EF_BUTTON` | 16 | Button pressed on device |
+| `EF_UNLOCK` | 32 | Door unlocked |
+| `EF_VERIFY` | 128 | User verified |
+| `EF_FPFTR` | 256 | Fingerprint feature event |
+| `EF_ALARM` | 512 | Alarm triggered |
+
+**Parameters:**
+- `$callback` - Function called with each event
+- `$events` - Bitmask of events to listen for (combine with `|`)
+- `$timeout` - Timeout in seconds (0 = infinite)
+
+```php
+use Mithun\PhpZkteco\Libs\Services\Util;
+
+// Listen for attendance AND user enrollment events
+$events = Util::EF_ATTLOG | Util::EF_ENROLLUSER | Util::EF_ENROLLFINGER;
+
+$zk->getRealTimeEvents(function($event) {
+    echo "Event: {$event['event_name']}\n";
+    
+    switch ($event['event_type']) {
+        case Util::EF_ATTLOG:
+            echo "Attendance: User {$event['user_id']} at {$event['record_time']}\n";
+            break;
+            
+        case Util::EF_ENROLLUSER:
+            echo "New user enrolled: {$event['user_id']}\n";
+            break;
+            
+        case Util::EF_ENROLLFINGER:
+            echo "Fingerprint enrolled for user {$event['user_id']}, finger {$event['finger_index']}\n";
+            break;
+            
+        case Util::EF_UNLOCK:
+            echo "Door {$event['door_id']} unlocked\n";
+            break;
+            
+        case Util::EF_ALARM:
+            echo "Alarm triggered: type {$event['alarm_type']}\n";
+            break;
+    }
+}, $events, timeout: 3600); // Listen for 1 hour
+```
+
+**Event Data Structure:**
+
+All events include these base fields:
+```php
+[
+    'event_type' => 1,              // Event constant (EF_ATTLOG, etc.)
+    'event_name' => 'attendance',   // Human-readable name
+    'device_ip' => '192.168.1.100',
+    'timestamp' => '2026-02-17 09:00:00',
+]
+```
+
+Plus event-specific fields:
+
+| Event | Additional Fields |
+|-------|-------------------|
+| `EF_ATTLOG` | `user_id`, `record_time`, `state` |
+| `EF_ENROLLUSER` / `EF_VERIFY` | `user_id` |
+| `EF_FINGER` / `EF_ENROLLFINGER` / `EF_FPFTR` | `user_id`, `finger_index` |
+| `EF_BUTTON` | `button_id` |
+| `EF_UNLOCK` | `door_id`, `unlock_type` |
+| `EF_ALARM` | `alarm_type` |
+
 ---
 
 ### Fingerprint Methods

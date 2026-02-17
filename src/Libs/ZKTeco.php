@@ -482,7 +482,7 @@ class ZKTeco
 
     /**
      * Register for real-time attendance logs from the device.
-     * 
+     *
      * This method registers the connection for real-time events and listens for
      * attendance log updates. When a user scans their fingerprint or enters their
      * credentials, the callback is called with the log data.
@@ -494,12 +494,40 @@ class ZKTeco
      */
     public function getRealTimeLogs(callable $callback, int $timeout = 0): bool
     {
+        return $this->getRealTimeEvents($callback, Util::EF_ATTLOG, $timeout);
+    }
+
+    /**
+     * Listen for all real-time events from the device.
+     * This is a more comprehensive version of getRealTimeLogs that supports multiple event types.
+     *
+     * Supported events:
+     * - Util::EF_ATTLOG (1): Attendance log - user punches in/out
+     * - Util::EF_FINGER (2): Fingerprint scanned
+     * - Util::EF_ENROLLUSER (4): User enrolled
+     * - Util::EF_ENROLLFINGER (8): Fingerprint enrolled
+     * - Util::EF_BUTTON (16): Button pressed
+     * - Util::EF_UNLOCK (32): Door unlocked
+     * - Util::EF_VERIFY (128): User verified
+     * - Util::EF_FPFTR (256): Fingerprint feature
+     * - Util::EF_ALARM (512): Alarm triggered
+     *
+     * Use bitwise OR to combine events: Util::EF_ATTLOG | Util::EF_ENROLLUSER
+     *
+     * @param callable $callback The callback function to call with each event.
+     *                           Receives an array with event_type, event_name, and event-specific data.
+     * @param int $events Bitmask of events to listen for (default: EF_ATTLOG only).
+     * @param int $timeout Timeout in seconds for listening (default: 0 = infinite).
+     * @return bool True if successfully registered for events.
+     */
+    public function getRealTimeEvents(callable $callback, int $events = Util::EF_ATTLOG, int $timeout = 0): bool
+    {
         $this->_section = __METHOD__;
 
         // Send CMD_REG_EVENT command to register for real-time events
-        // Data: 0x01 0x00 0x00 0x00 = register for EF_ATTLOG events
+        // Data: 4 bytes little-endian event mask
         $command = Util::CMD_REG_EVENT;
-        $commandString = pack('V', Util::EF_ATTLOG); // 4 bytes little-endian: 0x01 0x00 0x00 0x00
+        $commandString = pack('V', $events); // 4 bytes little-endian
         $chksum = 0;
         $sessionId = $this->_session_id;
 
@@ -515,7 +543,7 @@ class ZKTeco
 
         // Receive acknowledgment
         $this->_data_recv = Util::recvData($this, 1024);
-        
+
         if (!Util::checkValid($this->_data_recv)) {
             return false;
         }
@@ -527,7 +555,7 @@ class ZKTeco
 
         // Start listening for real-time events
         $startTime = time();
-        
+
         while (true) {
             // Check timeout
             if ($timeout > 0 && (time() - $startTime) >= $timeout) {
@@ -543,11 +571,11 @@ class ZKTeco
             }
 
             if ($ret !== false && !empty($data)) {
-                // Check if this is a real-time event
-                if (Util::isRealTimeEvent($data)) {
-                    $log = Util::decodeRealTimeLog($data, $this->_ip);
-                    if ($log !== null) {
-                        $callback($log);
+                // Check if this is a real-time event matching our registered events
+                if (Util::isRealTimeEvent($data, $events)) {
+                    $event = Util::decodeRealTimeEvent($data, $this->_ip);
+                    if ($event !== null) {
+                        $callback($event);
                     }
                 }
             } else {
