@@ -43,6 +43,7 @@ class ZKTeco
     public $_tcpmux_port = 0;
     public $_tcpmux_subdomain = '';
     public $_tcpmux_base_domain = '';
+    public $_tcpmux_last_error = null;
     public $_timeout = 25;
 
     /**
@@ -106,7 +107,8 @@ class ZKTeco
 
             // Perform HTTP CONNECT handshake
             if (!$this->_performHttpConnectHandshake()) {
-                throw new \Exception('HTTP CONNECT handshake failed for ' . $this->_getProxyTargetHost());
+                $errorDetail = $this->_tcpmux_last_error ?? 'unknown error';
+                throw new \Exception('HTTP CONNECT handshake failed for ' . $this->_getProxyTargetHost() . ' - ' . $errorDetail);
             }
         } else {
             // Non-TCPMUX mode
@@ -207,7 +209,24 @@ class ZKTeco
             return true;
         }
 
+        // Extract HTTP status line for cleaner error message
+        $statusLine = explode("\r\n", $response)[0] ?? '';
+        if (preg_match('/^HTTP\/\d\.\d\s+(\d+)\s+(.+)/i', $statusLine, $m)) {
+            $this->_tcpmux_last_error = "HTTP {$m[1]} {$m[2]} (proxy: {$this->_tcpmux_host}:{$this->_tcpmux_port})";
+        } else {
+            $this->_tcpmux_last_error = trim($response) ?: 'No response from proxy';
+        }
         return false;
+    }
+
+    /**
+     * Get the last TCPMUX error message
+     *
+     * @return string|null
+     */
+    public function getTcpmuxLastError(): ?string
+    {
+        return $this->_tcpmux_last_error ?? null;
     }
 
     /**
@@ -622,21 +641,21 @@ class ZKTeco
         while ($retries < $maxRetries) {
             // Clear TCP buffer before each attempt
             $this->_tcp_buffer = '';
-            
+
             $result = Attendance::get($this, $callback);
 
             // If false is returned, data was corrupted - reconnect and retry
             if ($result === false) {
                 $retries++;
-                
+
                 // Disconnect and reconnect to reset socket state
                 $this->disconnect();
                 usleep(500000); // 500ms delay before retry
-                
+
                 if (!$this->connect()) {
                     continue; // Connection failed, try again
                 }
-                
+
                 continue;
             }
 
