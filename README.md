@@ -59,7 +59,7 @@ if ($zk->connect()) {
 
 ## TCPMUX HTTP CONNECT Proxy
 
-Connect through FRP's TCPMUX httpconnect multiplexer for subdomain-based routing. This allows multiple devices to share a single port, routed by subdomain.
+Connect through a TCPMUX httpconnect multiplexer for subdomain-based routing. This allows multiple devices to share a single port, routed by subdomain.
 
 ### Basic TCPMUX Usage
 
@@ -67,11 +67,11 @@ Connect through FRP's TCPMUX httpconnect multiplexer for subdomain-based routing
 use Mithun\PhpZkteco\Libs\ZKTeco;
 
 $zk = new ZKTeco(
-    host: 'company-one-device-1.frp.example.com',  // subdomain.base_domain
+    host: 'company-one-device-1.proxy.example.com',  // subdomain.base_domain
     port: 4370,  // ZKTeco device port (default)
     tcpmux: [
         'subdomain' => 'company-one-device-1',
-        'port' => 1337,  // FRP TCPMUX port
+        'port' => 1337,  // TCPMUX proxy port
     ]
 );
 
@@ -83,43 +83,10 @@ if ($zk->connect()) {
 
 ### How TCPMUX Works
 
-1. Library connects to FRP server at `base_domain:tcpmux_port`
+1. Library connects to proxy server at `base_domain:tcpmux_port`
 2. Sends HTTP CONNECT request with target `subdomain.base_domain:device_port`
-3. FRP routes the connection to the device based on subdomain
+3. Proxy routes the connection to the device based on subdomain
 4. After tunnel is established, ZKTeco protocol communicates through it
-
-### FRP Server Configuration (frps.toml)
-
-```toml
-bindPort = 7000
-tcpmuxHTTPConnectPort = 1337
-
-[webServer]
-addr = "0.0.0.0"
-port = 7500
-```
-
-### FRP Client Configuration (frpc.yaml)
-
-```yaml
-serverAddr: "frp.example.com"
-serverPort: 7000
-
-proxies:
-  - name: "device_1_tcpmux"
-    type: tcpmux
-    multiplexer: httpconnect
-    subdomain: "company-one-device-1"
-    localIP: "192.168.1.100"
-    localPort: 4370
-    
-  - name: "device_2_tcpmux"
-    type: tcpmux
-    multiplexer: httpconnect
-    subdomain: "company-one-device-2"
-    localIP: "192.168.1.101"
-    localPort: 4370
-```
 
 ### Connection Comparison
 
@@ -127,9 +94,7 @@ proxies:
 |---------|---------------|--------|
 | Port per device | Required (e.g., 7001, 7002...) | Shared (e.g., 1337) |
 | Routing | By port number | By subdomain |
-| FRP config | `type: tcp` or `type: udp` | `type: tcpmux` |
 | Scalability | Limited by ports | Unlimited subdomains |
-| URL format | `frp.example.com:7001` | `device-1.frp.example.com:4370` |
 
 ## Constructor Parameters
 
