@@ -53,13 +53,23 @@ class Attendance
 
                 $state = hexdec(substr($u[1], 56, 2)); // Extract attendance state
 
-                $timestamp = Util::decodeTime(hexdec(Util::reverseHex(substr($u[1], 58, 8)))); // Decode timestamp from hex
+                $rawTimestamp = hexdec(Util::reverseHex(substr($u[1], 58, 8)));
+                $timestamp = Util::decodeTime($rawTimestamp); // Decode timestamp from hex
 
                 $type = hexdec(Util::reverseHex(substr($u[1], 66, 2))); // Extract attendance type
 
+                $userId = intval($id);
+
+                // Validate record: skip if timestamp is 0 (2000-01-01) or user_id is invalid
+                // ZKTeco epoch starts at 2000-01-01, so rawTimestamp = 0 means invalid/corrupt data
+                if ($rawTimestamp === 0 || $userId <= 0) {
+                    $attData = substr($attData, 40); // Skip corrupt record
+                    continue;
+                }
+
                 $data = [ // Add record to the attendance array
                     'uid'         => $uid,
-                    'user_id'     => intval($id),
+                    'user_id'     => $userId,
                     'state'       => $state,
                     'record_time' => $timestamp,
                     'type'        => $type,
