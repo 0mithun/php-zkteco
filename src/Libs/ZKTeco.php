@@ -620,18 +620,29 @@ class ZKTeco
     {
         $retries = 0;
         while ($retries < $maxRetries) {
-            $result = Attendance::get($this, $callback);
+            // Clear TCP buffer before each attempt
+            $this->_tcp_buffer = '';
             
-            // If false is returned, data was corrupted - retry
+            $result = Attendance::get($this, $callback);
+
+            // If false is returned, data was corrupted - reconnect and retry
             if ($result === false) {
                 $retries++;
+                
+                // Disconnect and reconnect to reset socket state
+                $this->disconnect();
                 usleep(500000); // 500ms delay before retry
+                
+                if (!$this->connect()) {
+                    continue; // Connection failed, try again
+                }
+                
                 continue;
             }
-            
+
             return $result;
         }
-        
+
         // All retries failed, return empty array
         return [];
     }
