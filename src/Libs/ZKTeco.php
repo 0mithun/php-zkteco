@@ -37,38 +37,187 @@ class ZKTeco
     public $_protocol = 'udp'; // 'udp' or 'tcp'
     public $_tcp_buffer = ''; // Buffer for TCP data overflow
 
+    // TCPMUX HTTP CONNECT proxy settings
+    public $_tcpmux_enabled = false;
+    public $_tcpmux_host = '';
+    public $_tcpmux_port = 0;
+    public $_tcpmux_subdomain = '';
+    public $_tcpmux_base_domain = '';
+    public $_timeout = 25;
+
     /**
-     * @param  string  $ip  Device IP address.
+     * @param  string  $host  Device IP/hostname (e.g., 'company-one-device-1.frp.utso.app' for TCPMUX, or direct IP/hostname).
      * @param  int  $port  Port number. Default: 4370.
      * @param  bool  $shouldPing  should ping before device connection
      * @param  int  $timeout  timeout in sec
+     * @param  int  $password  device password
+     * @param  string  $protocol  'udp' or 'tcp'
+     * @param  array  $tcpmux  TCPMUX configuration: ['subdomain' => 'company-device-1', 'port' => 1337]
      */
 
     public function __construct(
-        string $ip,
+        string $host = '',
         int $port = 4370,
         bool $shouldPing = false,
         int $timeout = 25,
         $password = 0,
-        string $protocol = 'udp' // new parameter
+        string $protocol = 'udp',
+        array $tcpmux = []
     ) {
-        $this->_ip = $ip;
-        $this->_port = $port;
         $this->_requiredPing = $shouldPing;
         $this->_password = (int)$password;
-        $this->_protocol = strtolower($protocol) === 'tcp' ? 'tcp' : 'udp';
+        $this->_timeout = $timeout;
 
-        if ($this->_protocol === 'tcp') {
+        // Check if TCPMUX is enabled - requires subdomain and port, base_domain derived from host
+        if (!empty($tcpmux) && isset($tcpmux['subdomain']) && isset($tcpmux['port'])) {
+            $this->_tcpmux_enabled = true;
+            $this->_tcpmux_subdomain = $tcpmux['subdomain'];
+            $this->_tcpmux_port = (int)$tcpmux['port'];
+
+            // Derive base_domain from host by removing subdomain prefix
+            $this->_ip = $host;
+            $subdomain = $tcpmux['subdomain'] . '.';
+            if (strpos($host, $subdomain) === 0) {
+                $this->_tcpmux_base_domain = substr($host, strlen($subdomain));
+            } else {
+                $this->_tcpmux_base_domain = $host; // Fallback: use host as base_domain
+            }
+            $this->_tcpmux_host = $this->_tcpmux_base_domain;
+            $this->_port = $port;
+            // TCPMUX always uses TCP
+            $this->_protocol = 'tcp';
+
             $this->_zkclient = socket_create(AF_INET, SOCK_STREAM, SOL_TCP);
             socket_set_option($this->_zkclient, SOL_SOCKET, SO_RCVTIMEO, ['sec' => $timeout, 'usec' => 500000]);
-            // Connect TCP socket before any send/recv
-            if (!@socket_connect($this->_zkclient, $this->_ip, $this->_port)) {
-                throw new \Exception('Unable to connect TCP socket to ' . $this->_ip . ':' . $this->_port);
+            socket_set_option($this->_zkclient, SOL_SOCKET, SO_SNDTIMEO, ['sec' => $timeout, 'usec' => 500000]);
+
+            // Resolve hostname to IP address
+            $tcpmuxIp = gethostbyname($this->_tcpmux_host);
+            if ($tcpmuxIp === $this->_tcpmux_host) {
+                // gethostbyname returns the hostname if resolution fails
+                throw new \Exception('Unable to resolve TCPMUX proxy hostname: ' . $this->_tcpmux_host);
+            }
+
+            // Connect to TCPMUX proxy server
+            if (!@socket_connect($this->_zkclient, $tcpmuxIp, $this->_tcpmux_port)) {
+                $error = socket_strerror(socket_last_error($this->_zkclient));
+                throw new \Exception('Unable to connect to TCPMUX proxy at ' . $this->_tcpmux_host . ':' . $this->_tcpmux_port . ' (' . $tcpmuxIp . '): ' . $error);
+            }
+
+            // Perform HTTP CONNECT handshake
+            if (!$this->_performHttpConnectHandshake()) {
+                throw new \Exception('HTTP CONNECT handshake failed for ' . $this->_getProxyTargetHost());
             }
         } else {
-            $this->_zkclient = socket_create(AF_INET, SOCK_DGRAM, SOL_UDP);
-            socket_set_option($this->_zkclient, SOL_SOCKET, SO_RCVTIMEO, ['sec' => $timeout, 'usec' => 500000]);
+            // Non-TCPMUX mode
+            $this->_ip = $host;
+            $this->_port = $port;
+            $this->_protocol = strtolower($protocol) === 'tcp' ? 'tcp' : 'udp';
+
+            if ($this->_protocol === 'tcp') {
+                $this->_zkclient = socket_create(AF_INET, SOCK_STREAM, SOL_TCP);
+                socket_set_option($this->_zkclient, SOL_SOCKET, SO_RCVTIMEO, ['sec' => $timeout, 'usec' => 500000]);
+                // Connect TCP socket before any send/recv
+                if (!@socket_connect($this->_zkclient, $this->_ip, $this->_port)) {
+                    throw new \Exception('Unable to connect TCP socket to ' . $this->_ip . ':' . $this->_port);
+                }
+            } else {
+                $this->_zkclient = socket_create(AF_INET, SOCK_DGRAM, SOL_UDP);
+                socket_set_option($this->_zkclient, SOL_SOCKET, SO_RCVTIMEO, ['sec' => $timeout, 'usec' => 500000]);
+            }
         }
+    }
+
+    /**
+     * Get the target host for HTTP CONNECT (subdomain.base_domain:port)
+     *
+     * @return string
+     */
+    protected function _getProxyTargetHost(): string
+    {
+        return $this->_tcpmux_subdomain . '.' . $this->_tcpmux_base_domain . ':' . $this->_port;
+    }
+
+    /**
+     * Perform HTTP CONNECT handshake for TCPMUX
+     *
+     * @return bool True if handshake successful, false otherwise
+     */
+    protected function _performHttpConnectHandshake(): bool
+    {
+        $targetHost = $this->_getProxyTargetHost();
+
+        // Build HTTP CONNECT request
+        $request = "CONNECT {$targetHost} HTTP/1.1\r\n";
+        $request .= "Host: {$targetHost}\r\n";
+        $request .= "Proxy-Connection: Keep-Alive\r\n";
+        $request .= "\r\n";
+
+        // Log the request for debugging
+        if (defined('ZKTECO_DEBUG') && ZKTECO_DEBUG) {
+            $logMsg = date('Y-m-d H:i:s') . " TCPMUX CONNECT request:\n{$request}\n";
+            if (defined('ZKTECO_DEBUG_LOG')) {
+                file_put_contents(ZKTECO_DEBUG_LOG, $logMsg, FILE_APPEND);
+            }
+        }
+
+        // Send HTTP CONNECT request
+        $sent = @socket_send($this->_zkclient, $request, strlen($request), 0);
+        if ($sent === false || $sent !== strlen($request)) {
+            return false;
+        }
+
+        // Read response (wait for HTTP response)
+        $response = '';
+        $maxBytes = 4096;
+        $buffer = '';
+
+        // Read until we get the full HTTP headers (ends with \r\n\r\n)
+        $attempts = 0;
+        $maxAttempts = 10;
+
+        while ($attempts < $maxAttempts) {
+            $ret = @socket_recv($this->_zkclient, $buffer, 1024, 0);
+            if ($ret === false || $ret === 0) {
+                $attempts++;
+                usleep(100000); // 100ms
+                continue;
+            }
+
+            $response .= $buffer;
+
+            // Check if we have complete headers
+            if (strpos($response, "\r\n\r\n") !== false) {
+                break;
+            }
+
+            $attempts++;
+        }
+
+        // Log the response for debugging
+        if (defined('ZKTECO_DEBUG') && ZKTECO_DEBUG) {
+            $logMsg = date('Y-m-d H:i:s') . " TCPMUX CONNECT response:\n{$response}\n";
+            if (defined('ZKTECO_DEBUG_LOG')) {
+                file_put_contents(ZKTECO_DEBUG_LOG, $logMsg, FILE_APPEND);
+            }
+        }
+
+        // Parse HTTP response - check for 200 status
+        if (preg_match('/^HTTP\/\d\.\d\s+200\s+/i', $response)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Check if TCPMUX proxy is enabled
+     *
+     * @return bool
+     */
+    public function isTcpmux(): bool
+    {
+        return $this->_tcpmux_enabled;
     }
 
     public function isTcp() {

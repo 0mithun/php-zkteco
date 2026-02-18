@@ -57,17 +57,98 @@ if ($zk->connect()) {
 }
 ```
 
+## TCPMUX HTTP CONNECT Proxy
+
+Connect through FRP's TCPMUX httpconnect multiplexer for subdomain-based routing. This allows multiple devices to share a single port, routed by subdomain.
+
+### Basic TCPMUX Usage
+
+```php
+use Mithun\PhpZkteco\Libs\ZKTeco;
+
+$zk = new ZKTeco(
+    host: 'company-one-device-1.frp.example.com',  // subdomain.base_domain
+    port: 4370,  // ZKTeco device port (default)
+    tcpmux: [
+        'subdomain' => 'company-one-device-1',
+        'port' => 1337,  // FRP TCPMUX port
+    ]
+);
+
+if ($zk->connect()) {
+    $users = $zk->getUsers();
+    $zk->disconnect();
+}
+```
+
+### How TCPMUX Works
+
+1. Library connects to FRP server at `base_domain:tcpmux_port`
+2. Sends HTTP CONNECT request with target `subdomain.base_domain:device_port`
+3. FRP routes the connection to the device based on subdomain
+4. After tunnel is established, ZKTeco protocol communicates through it
+
+### FRP Server Configuration (frps.toml)
+
+```toml
+bindPort = 7000
+tcpmuxHTTPConnectPort = 1337
+
+[webServer]
+addr = "0.0.0.0"
+port = 7500
+```
+
+### FRP Client Configuration (frpc.yaml)
+
+```yaml
+serverAddr: "frp.example.com"
+serverPort: 7000
+
+proxies:
+  - name: "device_1_tcpmux"
+    type: tcpmux
+    multiplexer: httpconnect
+    subdomain: "company-one-device-1"
+    localIP: "192.168.1.100"
+    localPort: 4370
+    
+  - name: "device_2_tcpmux"
+    type: tcpmux
+    multiplexer: httpconnect
+    subdomain: "company-one-device-2"
+    localIP: "192.168.1.101"
+    localPort: 4370
+```
+
+### Connection Comparison
+
+| Feature | Direct TCP/UDP | TCPMUX |
+|---------|---------------|--------|
+| Port per device | Required (e.g., 7001, 7002...) | Shared (e.g., 1337) |
+| Routing | By port number | By subdomain |
+| FRP config | `type: tcp` or `type: udp` | `type: tcpmux` |
+| Scalability | Limited by ports | Unlimited subdomains |
+| URL format | `frp.example.com:7001` | `device-1.frp.example.com:4370` |
+
 ## Constructor Parameters
 
 ```php
 $zk = new ZKTeco(
-    ip: '192.168.1.100',      // Device IP address (required)
+    host: '192.168.1.100',     // Device IP/hostname (required)
     port: 4370,                // Port number (default: 4370)
     shouldPing: false,         // Ping before connecting (default: false)
     timeout: 25,               // Connection timeout in seconds (default: 25)
     password: 0,               // Device password/CMD key (default: 0)
-    protocol: 'tcp'            // Protocol: 'tcp' or 'udp' (default: 'udp')
+    protocol: 'tcp',           // Protocol: 'tcp' or 'udp' (default: 'udp')
+    tcpmux: []                 // TCPMUX config (optional, see below)
 );
+
+// TCPMUX configuration array:
+$tcpmux = [
+    'subdomain' => 'device-1', // Device subdomain for routing
+    'port' => 1337,            // FRP TCPMUX port
+];
 ```
 
 ---
