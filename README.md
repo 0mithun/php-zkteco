@@ -101,7 +101,7 @@ if ($zk->connect()) {
 ```php
 $zk = new ZKTeco(
     host: '192.168.1.100',     // Device IP/hostname (required)
-    port: 4370,                // Port number (default: 4370)
+    port: 4370,                // Device port (default: 4370)
     shouldPing: false,         // Ping before connecting (default: false)
     timeout: 25,               // Connection timeout in seconds (default: 25)
     password: 0,               // Device password/CMD key (default: 0)
