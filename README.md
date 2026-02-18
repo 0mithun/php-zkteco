@@ -67,10 +67,10 @@ Connect through a TCPMUX httpconnect multiplexer for subdomain-based routing. Th
 use Mithun\PhpZkteco\Libs\ZKTeco;
 
 $zk = new ZKTeco(
-    host: 'company-one-device-1.proxy.example.com',  // subdomain.base_domain
+    host: 'device-1.proxy.example.com',  // subdomain.base_domain
     port: 4370,  // ZKTeco device port (default)
     tcpmux: [
-        'subdomain' => 'company-one-device-1',
+        'subdomain' => 'device-1',
         'port' => 1337,  // TCPMUX proxy port
     ]
 );
