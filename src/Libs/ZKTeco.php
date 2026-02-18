@@ -612,11 +612,28 @@ class ZKTeco
     /**
      * Retrieves the attendance records from the device.
      *
+     * @param callable|null $callback Optional callback to process each record.
+     * @param int $maxRetries Maximum retries on data corruption (default: 3).
      * @return array An array containing attendance records.
      */
-    public function getAttendances(?callable $callback = null): array
+    public function getAttendances(?callable $callback = null, int $maxRetries = 3): array
     {
-        return Attendance::get($this, $callback);
+        $retries = 0;
+        while ($retries < $maxRetries) {
+            $result = Attendance::get($this, $callback);
+            
+            // If false is returned, data was corrupted - retry
+            if ($result === false) {
+                $retries++;
+                usleep(500000); // 500ms delay before retry
+                continue;
+            }
+            
+            return $result;
+        }
+        
+        // All retries failed, return empty array
+        return [];
     }
 
     /**

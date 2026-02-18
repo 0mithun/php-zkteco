@@ -38,10 +38,14 @@ class Attendance
         $attData = Util::recData($self); // Read attendance data from the device
 
         $attendance = [];
+        $invalidCount = 0;
+        $totalParsed = 0;
+
         if (!empty($attData)) {
             $attData = substr($attData, 10); // Skip the first 10 bytes of data
 
             while (strlen($attData) > 40) { // Loop through each attendance record in the data
+                $totalParsed++;
                 $u = unpack('H78', substr($attData, 0, 39)); // Unpack 78 bytes of data as hexadecimal string
 
                 $u1 = hexdec(substr($u[1], 4, 2)); // Extract first byte of user ID (low order)
@@ -60,9 +64,10 @@ class Attendance
 
                 $userId = intval($id);
 
-                // Validate record: skip if timestamp is 0 (2000-01-01) or user_id is invalid
+                // Validate record: check if timestamp is 0 (2000-01-01) or user_id is invalid
                 // ZKTeco epoch starts at 2000-01-01, so rawTimestamp = 0 means invalid/corrupt data
                 if ($rawTimestamp === 0 || $userId <= 0) {
+                    $invalidCount++;
                     $attData = substr($attData, 40); // Skip corrupt record
                     continue;
                 }
@@ -85,6 +90,16 @@ class Attendance
                 }
 
                 $attData = substr($attData, 40); // Move to the next attendance record data
+            }
+        }
+
+        // If all or most records were invalid, it indicates data corruption/misalignment
+        // Return false to signal the caller should retry
+        if ($totalParsed > 0 && $invalidCount > 0) {
+            $invalidRatio = $invalidCount / $totalParsed;
+            // If more than 50% of records are invalid, consider entire response corrupted
+            if ($invalidRatio > 0.5) {
+                return false;
             }
         }
 
