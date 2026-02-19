@@ -47,7 +47,7 @@ class ZKTeco
     public $_timeout = 25;
 
     /**
-     * @param  string  $host  Device IP/hostname (e.g., 'company-one-device-1.frp.utso.app' for TCPMUX, or direct IP/hostname).
+    * @param  string  $host  Device IP/hostname (e.g., 'company-one-device-1.example.com' for TCPMUX, or direct IP/hostname).
      * @param  int  $port  Port number. Default: 4370.
      * @param  bool  $shouldPing  should ping before device connection
      * @param  int  $timeout  timeout in sec
