@@ -84,7 +84,7 @@ class User
         if (!empty($userData)) {
             $userData = substr($userData, 11);
 
-            while (strlen($userData) > 72) {
+            while (strlen($userData) >= 72) {
                 $u = unpack('H144', substr($userData, 0, 72));
 
                 $u1 = hexdec(substr($u[1], 2, 2));

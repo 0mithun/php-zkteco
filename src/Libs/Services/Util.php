@@ -619,42 +619,7 @@ class Util
             while ($bytes > $received) {
                 $dataRec = '';
                 if ($isTcp) {
-                    // First check if there's data in the buffer from previous recvData call
-                    $buffer = property_exists($self, '_tcp_buffer') ? $self->_tcp_buffer : '';
-
-                    if (!empty($buffer)) {
-                        // Use buffered data first
-                        $extracted = self::extractTcpPacket($buffer);
-                        if ($extracted !== null) {
-                            list($dataRec, $remaining) = $extracted;
-                            $self->_tcp_buffer = $remaining;
-                            self::debugLog($self, 'recData from buffer: ' . strlen($dataRec) . ' bytes, remaining=' . strlen($remaining));
-                        } else {
-                            // Need more data, read from socket
-                            $newData = '';
-                            $ret = @socket_recv($self->_zkclient, $newData, 4096, 0);
-                            if ($ret !== false && !empty($newData)) {
-                                $buffer .= $newData;
-                                $extracted = self::extractTcpPacket($buffer);
-                                if ($extracted !== null) {
-                                    list($dataRec, $remaining) = $extracted;
-                                    $self->_tcp_buffer = $remaining;
-                                }
-                            }
-                        }
-                    } else {
-                        // No buffer, read directly from socket
-                        $ret = @socket_recv($self->_zkclient, $dataRec, 4096, 0);
-
-                        if ($ret !== false && !empty($dataRec)) {
-                            // Extract first packet and buffer the rest
-                            $extracted = self::extractTcpPacket($dataRec);
-                            if ($extracted !== null) {
-                                list($dataRec, $remaining) = $extracted;
-                                $self->_tcp_buffer = $remaining;
-                            }
-                        }
-                    }
+                    $dataRec = self::readNextTcpPayload($self);
                 } else {
                     $ret = @socket_recvfrom($self->_zkclient, $dataRec, 1032, 0, $self->_ip, $self->_port);
                 }
@@ -663,7 +628,7 @@ class Util
                     if ($errors < $maxErrors) {
                         //try again if false
                         $errors++;
-                        usleep(100000); // 100ms instead of 1s for TCP
+                        usleep(100000); // 100ms
                         continue;
                     } else {
                         //return empty if has maximum count of errors
@@ -673,6 +638,9 @@ class Util
                         return '';
                     }
                 }
+
+                // Reset error counter on successful read
+                $errors = 0;
 
                 if ($first === false) {
                     //The first 4 bytes don't seem to be related to the user
@@ -686,17 +654,100 @@ class Util
                 $first = false;
             }
 
-            //flush socket - clear any remaining buffered data
-            $self->_tcp_buffer = '';
+            // Read the final CMD_ACK_OK / CMD_FREE_DATA packet that the device
+            // sends after all data packets. This packet must be consumed here and
+            // stored in _data_recv so the next _command() call can extract a valid
+            // reply_id from it. Previously this code blindly cleared _tcp_buffer
+            // and did a non-blocking recv, which on high-latency links (FRP proxy)
+            // could either miss the ACK or discard it from the buffer, causing all
+            // subsequent write commands to fail.
             if ($isTcp) {
-                @socket_recv($self->_zkclient, $dataRec, 1024, 0);
+                // The final ACK may already be sitting in _tcp_buffer (pulled in
+                // by readNextTcpPayload's large 16384-byte recv). Try buffer first.
+                $finalAck = '';
+                $buffer = $self->_tcp_buffer;
+                if (strlen($buffer) >= self::TCP_HEADER_SIZE) {
+                    $extracted = self::extractTcpPacket($buffer);
+                    if ($extracted !== null) {
+                        list($finalAck, $remaining) = $extracted;
+                        $self->_tcp_buffer = $remaining;
+                    }
+                }
+
+                // If not in buffer, do a blocking recv (with the normal timeout)
+                // to wait for it from the socket.
+                if (empty($finalAck)) {
+                    $self->_tcp_buffer = '';
+                    $finalAck = self::recvData($self, 1024);
+                }
+
+                if (!empty($finalAck) && strlen($finalAck) >= 8) {
+                    $self->_data_recv = $finalAck;
+                    self::debugLog($self, 'recData final ACK: ' . bin2hex($finalAck));
+                }
             } else {
+                $dataRec = '';
                 @socket_recvfrom($self->_zkclient, $dataRec, 1024, 0, $self->_ip, $self->_port);
+                if (!empty($dataRec) && strlen($dataRec) >= 8) {
+                    $self->_data_recv = $dataRec;
+                }
             }
             unset($dataRec);
         }
 
         return $data;
+    }
+
+    /**
+     * Read one complete TCP-framed ZKTeco payload from the socket.
+     *
+     * Accumulates data in $self->_tcp_buffer until a complete TCP frame
+     * (PP\x82\x7d + 4-byte length + payload) can be extracted. This properly
+     * handles partial TCP reads across multiple socket_recv calls without
+     * losing buffered data.
+     *
+     * @param ZKTeco $self The ZKTeco instance.
+     * @return string The extracted ZKTeco payload (TCP header stripped), or '' on failure.
+     */
+    private static function readNextTcpPayload(ZKTeco $self): string
+    {
+        $buffer = property_exists($self, '_tcp_buffer') ? $self->_tcp_buffer : '';
+        $maxReadAttempts = 50; // Safety limit to prevent infinite loop
+        $attempts = 0;
+
+        while ($attempts < $maxReadAttempts) {
+            // Try to extract a complete TCP packet from current buffer
+            if (strlen($buffer) >= self::TCP_HEADER_SIZE) {
+                $extracted = self::extractTcpPacket($buffer);
+                if ($extracted !== null) {
+                    list($payload, $remaining) = $extracted;
+                    $self->_tcp_buffer = $remaining;
+                    self::debugLog($self, 'recData extracted: ' . strlen($payload) . ' bytes, buffered=' . strlen($remaining));
+                    return $payload;
+                }
+                // Buffer has TCP header but payload is incomplete - need more data
+            }
+
+            // Read more data from socket and accumulate in buffer
+            $newData = '';
+            $ret = @socket_recv($self->_zkclient, $newData, 16384, 0);
+
+            if ($ret === false || $ret === 0 || empty($newData)) {
+                // Socket timeout or error - save accumulated buffer for next call
+                $self->_tcp_buffer = $buffer;
+                self::debugLog($self, 'readNextTcpPayload: socket_recv returned no data, buffered=' . strlen($buffer));
+                return '';
+            }
+
+            $buffer .= $newData;
+            $attempts++;
+            self::debugLog($self, 'readNextTcpPayload: read ' . strlen($newData) . ' bytes, total buffer=' . strlen($buffer));
+        }
+
+        // Safety: save buffer even if max attempts reached
+        $self->_tcp_buffer = $buffer;
+        self::debugLog($self, 'readNextTcpPayload: max attempts reached, buffered=' . strlen($buffer));
+        return '';
     }
 
     /**
